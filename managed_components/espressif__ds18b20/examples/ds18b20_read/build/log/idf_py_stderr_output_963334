@@ -1,0 +1,5 @@
+Command: make -j 6 all
+fatal: 不是 git 仓库（或者任何父目录）：.git
+fatal: 不是 git 仓库（或者任何父目录）：.git
+/home/alientek/workspace/esp-idf/components/mbedtls/esp_crt_bundle/gen_crt_bundle.py:100: CryptographyDeprecationWarning: Parsed a serial number which wasn't positive (i.e., it was negative or zero), which is disallowed by RFC 5280. Loading this certificate will cause an exception in a future release of cryptography.
+  self.certificates.append(x509.load_pem_x509_certificate(crt.encode(), default_backend()))
