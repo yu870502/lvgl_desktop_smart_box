@@ -14,27 +14,34 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #include "esp_system.h"
 #include "driver/gpio.h"
 #include "esp_timer.h" 
 
 #include "lvgl.h"
+#include "lv_mem.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
-
-#include "ui.h"
 
 #include "esp_log.h"
 #include "onewire_bus.h"
 #include "ds18b20.h"
 
 #include "uc1638.h"
+#include "esp_adc/adc_continuous.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include "humidity_sensor.h"
-
 #include "smartconfig.h"
 
-static const char *TAG = "18b20";
+#include "ui.h"
+#include "network_moni.h"
+#include "sntp_sync.h"
+#include "update_ui.h"
+
+static const char *TAG = "main";
 
 /*
  This code displays some fancy graphics on the 320x240 LCD on an ESP-WROVER_KIT board.
@@ -68,7 +75,7 @@ int ds18b20_device_num = 0;
 onewire_bus_handle_t bus = NULL;
 ds18b20_device_handle_t ds18b20s[EXAMPLE_ONEWIRE_MAX_DS18B20];
 
-float temperature;
+float curTemp;
 
 void add_scale_labels(void);
 // 初始化滚动文本
@@ -93,8 +100,8 @@ void area_flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) 
     uint8_t start_col = area->x1;         // 起始列=脏区X起点
     uint8_t end_col = area->x2;           // 结束列=脏区X终点
 
-    // printf("x1:%d, x2:%d, y1:%d, y2:%d\n", area->x1, area->x2, area->y1, area->y2);
-    // printf("func:%s, start_page:%u, end_page:%u, start_col:%u, end_col:%u\n", __FUNCTION__, start_page, end_page, start_col, end_col);
+    // ESP_LOGI(TAG, "x1:%d, x2:%d, y1:%d, y2:%d\n", area->x1, area->x2, area->y1, area->y2);
+    // ESP_LOGI(TAG, "func:%s, start_page:%u, end_page:%u, start_col:%u, end_col:%u\n", __FUNCTION__, start_page, end_page, start_col, end_col);
 
     uint32_t width = area->x2 - area->x1 + 1;
 
@@ -156,31 +163,21 @@ void add_scale_labels(void) {
     }
 }
 
-void update_bar_temperature(float temperature) {
-    if (temp_bar == NULL || temp_label == NULL) return;
-    
-    if (temperature < 0) temperature = 0;
-    if (temperature > 50) temperature = 50;
-    
-    lv_bar_set_value(temp_bar, (int32_t)temperature, LV_ANIM_ON);
-    
-    char temp_str[16];
-    snprintf(temp_str, sizeof(temp_str), "%.2f°C", temperature);
-    lv_label_set_text(temp_label, temp_str);
-}
-
 void getDs18b20TempTask(void *)
 {
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
 
-        // trigger temperature conversion for all sensors on the bus
+        // trigger curTemp conversion for all sensors on the bus
         ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
+        float temp;
         for (int i = 0; i < ds18b20_device_num; i ++) {
-            ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temperature));
-            ESP_LOGI(TAG, "temperature read from DS18B20[%d]: %.2f°C", i, temperature);
-            // update_bar_temperature(temperature);
-            update_temp_display(temperature);
+            ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temp));
+            ESP_LOGI(TAG, "temperature read from DS18B20[%d]: %.2f°C", i, temp);
+            if(temp != curTemp){
+                curTemp = temp;
+                update_ui_safe(temp_meter, update_temp_display, (void *)&curTemp, sizeof(curTemp));
+            }
         }
     }
 }
@@ -227,6 +224,108 @@ void init_ds18b20(void)
     xTaskCreate(getDs18b20TempTask, "getTemp", 2 * 1024, NULL, 5, NULL);
 }
 
+static TaskHandle_t s_task_handle;
+
+static adc_channel_t channel[2] = {ADC_CHANNEL_4, ADC_CHANNEL_5};
+static int voltage = 0;
+static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
+{
+    BaseType_t mustYield = pdFALSE;
+    //Notify that ADC continuous driver has done enough number of conversions
+    vTaskNotifyGiveFromISR(s_task_handle, &mustYield);
+
+    return (mustYield == pdTRUE);
+}
+
+void continuous_read_task(void *)
+{
+    esp_err_t ret;
+    uint32_t ret_num = 0;
+    uint8_t result[EXAMPLE_READ_LEN] = {0};
+    memset(result, 0xcc, EXAMPLE_READ_LEN);
+
+    s_task_handle = xTaskGetCurrentTaskHandle();
+
+    adc_continuous_handle_t handle = NULL;
+    continuous_adc_init(channel, sizeof(channel) / sizeof(adc_channel_t), &handle);
+
+    adc_continuous_evt_cbs_t cbs = {
+        .on_conv_done = s_conv_done_cb,
+    };
+    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(handle, &cbs, NULL));
+    ESP_ERROR_CHECK(adc_continuous_start(handle));
+
+    while (1) {
+
+        /**
+         * This is to show you the way to use the ADC continuous mode driver event callback.
+         * This `ulTaskNotifyTake` will block when the data processing in the task is fast.
+         * However in this example, the data processing (print) is slow, so you barely block here.
+         *
+         * Without using this event callback (to notify this task), you can still just call
+         * `adc_continuous_read()` here in a loop, with/without a certain block timeout.
+         */
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        char unit[] = EXAMPLE_ADC_UNIT_STR(EXAMPLE_ADC_UNIT);
+
+        while (1) {
+            // ret = adc_continuous_read(handle, result, EXAMPLE_READ_LEN, &ret_num, 0);
+            ret = adc_continuous_read(handle, result, 4, &ret_num, 0);
+            if (ret == ESP_OK) {
+                // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
+                for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
+                    adc_digi_output_data_t *p = (adc_digi_output_data_t*)&result[i];
+                    // printf("reslut size:%d\n", sizeof(adc_digi_output_data_t));
+                    uint32_t chan_num = EXAMPLE_ADC_GET_CHANNEL(p);
+                    uint32_t data = EXAMPLE_ADC_GET_DATA(p);
+                    adc_cali_raw_to_voltage(cali_handle, data, &voltage);
+                    float humi = 0.0;
+                    /* Check the channel number validation, the data is invalid if the channel num exceed the maximum channel */
+                    if (chan_num < SOC_ADC_CHANNEL_NUM(EXAMPLE_ADC_UNIT)) {
+                        // ESP_LOGI(TAG, "Raw data:%#x, data:%d, voltage:%dmv, Channel: %"PRIu32, p->val, data, voltage, chan_num);
+                        humi = (float)(voltage * 244) / 10000.0;
+                        ESP_LOGI(TAG, "humi:%f", humi);
+                        if(!humiObj){
+                            ESP_LOGW(TAG, "humiObj is none");
+                        }
+                        else if(humi != humiObj->curVal){
+                            humiObj->curVal = humi;
+                            update_ui_safe(humi_meter, update_humi_display, &humiObj->curVal, sizeof(humiObj->curVal));   
+                        }
+                    } else {
+                        ESP_LOGW(TAG, "Invalid data [%s_%"PRIu32"_%"PRIx32"]", unit, chan_num, data);
+                    }
+                }
+                /**
+                 * Because printing is slow, so every time you call `ulTaskNotifyTake`, it will immediately return.
+                 * To avoid a task watchdog timeout, add a delay here. When you replace the way you process the data,
+                 * usually you don't need this delay (as this task will block for a while).
+                 */
+            } else if (ret == ESP_ERR_TIMEOUT) {
+                //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
+    ESP_ERROR_CHECK(adc_continuous_stop(handle));
+    ESP_ERROR_CHECK(adc_continuous_deinit(handle));
+}
+
+int start_humidity_sensor(void *arg)
+{
+    humiObj = calloc(1, sizeof(humidity_t));
+    if(!humiObj){
+        ESP_LOGW(TAG, "Create humidity sensor failed\n");
+        return -1;
+    }
+    xTaskCreate(continuous_read_task, "continuous_read", 4096, NULL, 5, NULL);
+    return 0; 
+}
+
+
 static uint32_t gpio_isr_times = 0;
 static void gpio_isr_handler(void* arg)
 {
@@ -246,22 +345,10 @@ uint32_t read_gpio_key_status()
 {
     uint32_t recvTimes = 0;
     if (xQueueReceive(gpio_evt_queue, &recvTimes, 0)){
-        printf("recvTimes : %lu\n", recvTimes);
+        ESP_LOGI(TAG, "recvTimes : %lu\n", recvTimes);
         return LV_KEY_ENTER;
     }
     return 0;
-}
-
-void lvgl_task(void *arg)
-{
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xDelay = pdMS_TO_TICKS(5); // 改为至少 5ms
-
-    while (1)
-    {
-        lv_timer_handler();
-        vTaskDelayUntil(&xLastWakeTime, xDelay); // 确保 xDelay > 0
-    }
 }
 
 // 新增：定时器回调函数（用于 lv_tick_inc）
@@ -318,7 +405,7 @@ static void btnPwron_event_handler(lv_event_t *e) {
 
     if(e->code == LV_EVENT_CLICKED){
         bool checked = lv_obj_has_state(btn, LV_STATE_CHECKED);
-        printf("checked:%d\n", checked);
+        ESP_LOGI(TAG, "checked:%d\n", checked);
         lv_obj_align_to(label, btn, LV_ALIGN_CENTER, 0, 0);
         if(checked) {
             lv_label_set_text(label, "OFF");
@@ -329,11 +416,25 @@ static void btnPwron_event_handler(lv_event_t *e) {
     }
 }
 
+void meminfo_task(void *arg)
+{
+    lv_mem_monitor_t mon_p;
+    for(;;){
+        ESP_LOGI(TAG, "ESP32 free mem: %d", esp_get_free_heap_size());
+        ESP_LOGI(TAG, "--------------------------------");
 
+        lv_mem_monitor(&mon_p);
+        // ESP_LOGI(TAG, "总内存: %d\n", LV_MEM_SIZE);
+        ESP_LOGI(TAG, "lv total: %d", mon_p.total_size);
+        ESP_LOGI(TAG, "lv free: %d", mon_p.free_size);
+        ESP_LOGI(TAG, "lv frag: %d", mon_p.frag_pct);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
 
 void app_main(void)
 {
-    printf("Build time:%s\n", __TIME__);
+    ESP_LOGI(TAG, "Build time:%s\n", __TIME__);
 
     smartconfig_run();
 
@@ -346,10 +447,18 @@ void app_main(void)
     lv_port_disp_init();  // 注册LVGL的显示任务
     lv_port_indev_init(); // 注册LVGL的触屏检测任务
 
-    create_weather_dashboard();
+    LV_LOG_WARN("测试警告日志");      // 应该输出
 
-    // init_ds18b20();
-    start_humidity_sensor(update_humi_display);
+    my_gui_init();
+
+    start_network_info_update();
+    sntp_sync_start();
+    init_ds18b20();
+    start_humidity_sensor(NULL);
+
+    xTaskCreate(meminfo_task, "meminfo", 2048, NULL, 6, NULL);
+
+    uint64_t timeCnt = 0;
 
 //-------------------------------------------------------------------------------------------
     TimerHandle_t lvgl_timer = xTimerCreate(
@@ -360,13 +469,16 @@ void app_main(void)
         lv_tick_timer_cb);
 
     xTimerStart(lvgl_timer, 0);
-#endif
 
-    while(1){
-        vTaskDelay(pdMS_TO_TICKS(5)); // 精确延迟 5ms
-#if LV_ENABLE
+    while(1) {
+        process_ui_messages();
         lv_timer_handler();
-#endif     
-    // testDisp();
+        vTaskDelay(pdMS_TO_TICKS(5));
+        timeCnt++;
+
+        if(0 == timeCnt % 200){ //1s
+            update_time_display(NULL, NULL);
+        }
     }
+#endif
 }
