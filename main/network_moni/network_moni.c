@@ -7,25 +7,36 @@
 #include "update_ui.h"
 
 static const char *TAG = "network_info";
-int curRSSI = 0;
+static int curRSSI = 0;
+static char curName[33] = {0};
 char curCC[3] = {0};
 
 int read_network_info(void)
 {
     esp_err_t ret = ESP_OK;
     wifi_ap_record_t ap_info;
+    static uint8_t single = 0;
 
     memset((void *)&ap_info, 0, sizeof(ap_info));
     if(ESP_OK != (ret = esp_wifi_sta_get_ap_info(&ap_info))){
         ESP_LOGW(TAG, "esp_wifi_sta_get_ap_info error (%s)", esp_err_to_name(ret));
         return -1;
     }
-    ESP_LOGW(TAG, "ap info rssi = %d", ap_info.rssi);
+
+    // ESP_LOGW(TAG, "ap ssid = %s", ap_info.ssid);
+    // ESP_LOGW(TAG, "ap info country code = %s", ap_info.country.cc);
+    if(!single){
+        memcpy(curName, ap_info.ssid, sizeof(curName));
+        memcpy(curCC, ap_info.country.cc, sizeof(curCC));
+        update_ui_safe(wifi_name_label, update_wifi_name, curName, sizeof(curName));
+        single = 1;
+    }  
+
+    // ESP_LOGW(TAG, "ap info rssi = %d", ap_info.rssi);
     if(curRSSI != ap_info.rssi){
         curRSSI = ap_info.rssi;
-        update_ui_safe(wifi_label, update_wifi_rssi, &curRSSI, sizeof(curRSSI));
+        update_ui_safe(wifi_rssi_label, update_wifi_rssi, &curRSSI, sizeof(curRSSI));
     }
-    ESP_LOGW(TAG, "ap info country code = %s", ap_info.country.cc);
 
     return 0;
 }

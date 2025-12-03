@@ -2,13 +2,28 @@
 #include <stdio.h>
 #include <time.h>
 
-#define WIFI_RSSI_LABLE_FORMAT "%ddb"
+#define WIFI_NAME_LABLE_FORMAT "WIFI:%s\nCC:%s"
+#define WIFI_RSSI_LABLE_FORMAT "RSSI:%ddb"
 
 typedef struct {
     lv_obj_t* target;    // 目标控件
     void* data;          // 数据指针
     void (*update_func)(lv_obj_t*, void*); // 更新函数
 } UI_Update_Message;
+
+extern lv_obj_t *base_info_scr1;
+extern lv_obj_t *base_info_scr2;
+extern lv_obj_t *dev_info_scr;
+extern lv_obj_t *cur_scr;
+
+// extern lv_obj_t *default_scr;
+// extern lv_obj_t *base_info_scr;
+// extern lv_obj_t *cur_scr;
+
+extern lv_obj_t *time_label_2;
+extern lv_obj_t *date_label;
+extern lv_obj_t *temp_label;
+extern lv_obj_t *humi_label;
 
 extern lv_obj_t* temp_meter;
 extern lv_obj_t* humi_meter;
@@ -19,7 +34,9 @@ extern lv_meter_indicator_t* humi_needle;
 extern lv_obj_t* temp_val_label;
 extern lv_obj_t* humi_val_label;
 
-extern lv_obj_t* wifi_label;
+extern lv_obj_t* wifi_name_label;
+extern lv_obj_t* wifi_rssi_label;
+
 extern lv_obj_t* time_YMD_label;
 extern lv_obj_t* time_label;
 extern lv_obj_t* time_week_label;

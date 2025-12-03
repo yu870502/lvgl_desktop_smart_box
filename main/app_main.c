@@ -41,6 +41,9 @@
 #include "sntp_sync.h"
 #include "update_ui.h"
 
+#include "driver/pulse_cnt.h"
+#include "ec11.h"
+
 static const char *TAG = "main";
 
 /*
@@ -69,6 +72,7 @@ static const char *TAG = "main";
 #define EXAMPLE_ONEWIRE_BUS_GPIO    27
 #define EXAMPLE_ONEWIRE_MAX_DS18B20 2
 
+static QueueHandle_t ec11_evt_queue = NULL;
 static QueueHandle_t gpio_evt_queue = NULL;
 
 int ds18b20_device_num = 0;
@@ -82,7 +86,6 @@ void add_scale_labels(void);
 void init_scroll_text(void);
 
 static lv_obj_t *temp_bar;
-static lv_obj_t *temp_label;
 static lv_obj_t *scroll_label;
 static const char *scroll_texts[] = {
     "   This is my show time    ",
@@ -139,7 +142,6 @@ void init_scroll_text(void) {
     
     // 放在温度显示区域下方
     lv_obj_set_width(scroll_label, 90); // 设置宽度限制滚动范围
-    lv_obj_align_to(scroll_label, temp_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
 }
 
 // 更新滚动文本（可选：定时切换不同文本）
@@ -176,7 +178,7 @@ void getDs18b20TempTask(void *)
             ESP_LOGI(TAG, "temperature read from DS18B20[%d]: %.2f°C", i, temp);
             if(temp != curTemp){
                 curTemp = temp;
-                update_ui_safe(temp_meter, update_temp_display, (void *)&curTemp, sizeof(curTemp));
+                update_ui_safe(temp_meter, update_temp, (void *)&curTemp, sizeof(curTemp));
             }
         }
     }
@@ -291,7 +293,7 @@ void continuous_read_task(void *)
                         }
                         else if(humi != humiObj->curVal){
                             humiObj->curVal = humi;
-                            update_ui_safe(humi_meter, update_humi_display, &humiObj->curVal, sizeof(humiObj->curVal));   
+                            update_ui_safe(humi_meter, update_humi, &humiObj->curVal, sizeof(humiObj->curVal));   
                         }
                     } else {
                         ESP_LOGW(TAG, "Invalid data [%s_%"PRIu32"_%"PRIx32"]", unit, chan_num, data);
@@ -432,6 +434,40 @@ void meminfo_task(void *arg)
     }
 }
 
+#define ROTARY_LEFT 0
+#define ROTARY_RIGHT 1
+#define ROTARY_NONE -1
+
+//watch point isr
+static bool ec11_rotary_evt_send(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx)
+{
+    BaseType_t high_task_wakeup;
+    // QueueHandle_t ec11_evt_queue = (QueueHandle_t)user_ctx;
+    int rotary = ROTARY_NONE;
+    if(edata->watch_point_value < 0){
+        rotary = ROTARY_RIGHT;
+    }
+    else if(edata->watch_point_value > 0){
+        rotary = ROTARY_LEFT; 
+    }
+    // send event data to ec11_evt_queue, from this interrupt callback
+    xQueueSendFromISR(ec11_evt_queue, &rotary, &high_task_wakeup);
+    return (high_task_wakeup == pdTRUE);
+}
+
+void ec11_rotray_evt_handle_task(void *arg)
+{
+    int event = ROTARY_NONE;
+    while (1) {
+        if (xQueueReceive(ec11_evt_queue, &event, pdMS_TO_TICKS(1000))) {
+            ESP_LOGI(TAG, "Watch point event, count: %d", event);
+        } 
+        // else {
+        //     ESP_LOGE(TAG, "receive ec11 rotary evt err");
+        // }
+    }
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "Build time:%s\n", __TIME__);
@@ -458,7 +494,9 @@ void app_main(void)
 
     xTaskCreate(meminfo_task, "meminfo", 2048, NULL, 6, NULL);
 
-    uint64_t timeCnt = 0;
+    ec11_evt_queue = xQueueCreate(15, sizeof(int));
+    xTaskCreate(ec11_rotray_evt_handle_task, "ec11 rotary", 2048, NULL, 6, NULL);
+    ec11_start(ec11_create(ec11_rotary_evt_send, ec11_evt_queue));
 
 //-------------------------------------------------------------------------------------------
     TimerHandle_t lvgl_timer = xTimerCreate(
@@ -470,6 +508,7 @@ void app_main(void)
 
     xTimerStart(lvgl_timer, 0);
 
+    uint64_t timeCnt = 0;
     while(1) {
         process_ui_messages();
         lv_timer_handler();
@@ -477,7 +516,20 @@ void app_main(void)
         timeCnt++;
 
         if(0 == timeCnt % 200){ //1s
-            update_time_display(NULL, NULL);
+            update_time(NULL, NULL);
+        }
+
+        if(0 == timeCnt % 400){ //5s
+            if(base_info_scr1 == cur_scr){
+                cur_scr = base_info_scr2;
+            }
+            else if(base_info_scr2 == cur_scr){
+                cur_scr = dev_info_scr;
+            }
+            else if(dev_info_scr == cur_scr){
+                cur_scr = base_info_scr1;
+            }            
+            lv_scr_load(cur_scr);
         }
     }
 #endif

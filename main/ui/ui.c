@@ -10,11 +10,19 @@
 
 #include "ui.h"
 
+lv_obj_t *base_info_scr1 = NULL;
+lv_obj_t *base_info_scr2 = NULL;
+lv_obj_t *dev_info_scr = NULL;
+lv_obj_t *cur_scr = NULL;
+
 QueueHandle_t ui_update_queue;
 
 lv_obj_t* temp_meter;
 lv_obj_t* humi_meter; 
-lv_obj_t* wifi_label;
+
+lv_obj_t* wifi_name_label;
+lv_obj_t* wifi_rssi_label;
+
 lv_obj_t* time_YMD_label;
 lv_obj_t* time_label;
 lv_obj_t* time_week_label;
@@ -25,13 +33,21 @@ lv_meter_indicator_t* humi_needle = NULL;
 lv_obj_t* temp_val_label = NULL;
 lv_obj_t* humi_val_label = NULL;
 
+lv_obj_t *time_label_2 = NULL;
+lv_obj_t *date_label = NULL;
+lv_obj_t *temp_label = NULL;
+lv_obj_t *humi_label = NULL;
+
 // 创建温度仪表盘
-lv_obj_t* create_meter(){
-    //创建温度
-    temp_meter = lv_meter_create(lv_scr_act());
+void create_scr1(void){
+    // base_info_scr1 = lv_scr_act();
+    base_info_scr1 = lv_obj_create(NULL);
+
+    //创建温度表盘
+    temp_meter = lv_meter_create(base_info_scr1);
     if(!temp_meter){
         printf("create temp meter failed\n");
-        return NULL;
+        return;
     }
     lv_obj_set_size(temp_meter, 96, 96);
 
@@ -59,13 +75,12 @@ lv_obj_t* create_meter(){
     lv_obj_align(temp_val_label, LV_ALIGN_BOTTOM_MID, 0, -2);
 //------------------------------------------------------------------------------------------
     //创建湿度表盘
-    humi_meter = lv_meter_create(lv_scr_act());
+    humi_meter = lv_meter_create(base_info_scr1);
     if(!humi_meter){
         printf("create temp meter failed\n");
-        return NULL;
+        return;
     }
     lv_obj_set_size(humi_meter, 96, 96);
-    // lv_obj_align(humi_meter, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_align_to(humi_meter, temp_meter, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
 
     lv_meter_scale_t* scale = lv_meter_add_scale(humi_meter);
@@ -91,38 +106,100 @@ lv_obj_t* create_meter(){
     lv_obj_set_style_text_font(humi_val_label, &lv_font_montserrat_12, 0);
     lv_obj_align(humi_val_label, LV_ALIGN_BOTTOM_MID, 0, -2);
 
-    return humi_meter;
+    // 创建时间显示
+    time_YMD_label = lv_label_create(base_info_scr1);
+    lv_obj_set_style_text_font(time_YMD_label, &lv_font_montserrat_14, 0);
+    lv_label_set_text(time_YMD_label, "1970\n12-31");   //占位
+    lv_obj_align_to(time_YMD_label, humi_meter, LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+
+    time_week_label = lv_label_create(base_info_scr1);
+    lv_obj_set_style_text_font(time_week_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(time_week_label, time_YMD_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
+
+    time_label = lv_label_create(base_info_scr1);
+    lv_obj_set_style_text_font(time_label, &lv_font_montserrat_10, 0);
+    lv_obj_align_to(time_label, time_week_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
 }
 
-// 创建函数
-void create_wifi_display() {
-    wifi_label = lv_label_create(lv_scr_act());
-    lv_label_set_text(wifi_label, WIFI_RSSI_LABLE_FORMAT);
-    lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(wifi_label, humi_meter, LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+// 创建基本信息显示界面2
+void create_scr2(void) {
+    base_info_scr2 = lv_obj_create(NULL);
+    
+    // 1. 大时间显示 (左侧，大字体，时分秒用冒号分隔)
+    time_label_2 = lv_label_create(base_info_scr2);
+    lv_label_set_text(time_label_2, "00:00:01");
+    lv_obj_set_style_text_font(time_label_2, &lv_font_montserrat_38, 0);  // 大字体
+    // lv_obj_set_style_text_color(time_label_2, lv_color_white(), 0);
+    lv_obj_align(time_label_2, LV_ALIGN_TOP_LEFT, 10, 10);
+    
+    // 2. 日期显示 (时间下方)
+    date_label = lv_label_create(base_info_scr2);
+    lv_label_set_text(date_label, "2025-01-01 Fri");
+    lv_obj_set_style_text_font(date_label, &lv_font_montserrat_16, 0);
+    // lv_obj_set_style_text_color(date_label, lv_color_white(), 0);
+    // 对齐到时间label下方
+    lv_obj_align_to(date_label, time_label_2, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 10);
+    
+    // 3. 计算竖线位置 (在时间label右侧)
+    lv_coord_t time_width = lv_obj_get_width(time_label_2);
+    lv_coord_t time_x = lv_obj_get_x(time_label_2);
+    lv_coord_t line_x = time_x + time_width + 2;  // 距离时间15像素
+    
+    // 创建竖线分隔符 (从顶部到底部)
+    lv_obj_t *vline = lv_obj_create(base_info_scr2);
+    lv_obj_remove_style_all(vline);
+    lv_obj_set_size(vline, 2, 80);  // 竖线高度80像素，几乎占满屏幕高度
+    lv_obj_set_pos(vline, line_x, 2);  // 从y=8开始，留点边距
+    lv_obj_set_style_bg_color(vline, lv_color_white(), 0);
+    
+    // 4. 右侧区域 - 温度显示 (竖线右侧)
+    temp_label = lv_label_create(base_info_scr2);
+    lv_label_set_text(temp_label, "25.0°C");
+    lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_14, 0);
+    // lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
+    // 对齐到竖线右侧
+    lv_obj_align_to(temp_label, vline, LV_ALIGN_OUT_RIGHT_TOP, 15, 15);
+    
+    // 5. 右侧区域 - 湿度显示 (温度下方)
+    humi_label = lv_label_create(base_info_scr2);
+    lv_label_set_text(humi_label, "50%");
+    lv_obj_set_style_text_font(humi_label, &lv_font_montserrat_14, 0);
+    // lv_obj_set_style_text_color(humi_label, lv_color_white(), 0);
+    // 对齐到温度label下方
+    lv_obj_align_to(humi_label, temp_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 20);
+}
+
+int create_dev_info_scr(){
+    dev_info_scr = lv_obj_create(NULL);
+
+    lv_obj_t * label = lv_label_create(dev_info_scr);
+    lv_label_set_text(label, "Base Info:");
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    wifi_name_label = lv_label_create(dev_info_scr);
+    lv_label_set_text(wifi_name_label, WIFI_NAME_LABLE_FORMAT);
+    lv_obj_set_style_text_font(wifi_name_label, &lv_font_montserrat_14, 0);
+    lv_obj_align_to(wifi_name_label, label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
+
+    wifi_rssi_label = lv_label_create(dev_info_scr);
+    lv_label_set_text(wifi_rssi_label, WIFI_RSSI_LABLE_FORMAT);
+    lv_obj_set_style_text_font(wifi_rssi_label, &lv_font_montserrat_14, 0);
+    lv_obj_align_to(wifi_rssi_label, wifi_name_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
+
+    return 0;
 }
 
 void my_gui_init(void) {
     ui_update_queue = xQueueCreate(20, sizeof(UI_Update_Message)); 
 
     // 创建温度表盘
-    create_meter();
+    create_scr1();
+    create_scr2();
+    create_dev_info_scr();    
 
-    create_wifi_display();
-
-    // 创建时间显示
-    time_YMD_label = lv_label_create(lv_scr_act());
-    lv_obj_set_style_text_font(time_YMD_label, &lv_font_montserrat_10, 0);
-    lv_obj_align_to(time_YMD_label, wifi_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
-
-    time_week_label = lv_label_create(lv_scr_act());
-    lv_obj_set_style_text_font(time_week_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(time_week_label, time_YMD_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
-
-    time_label = lv_label_create(lv_scr_act());
-    lv_obj_set_style_text_font(time_label, &lv_font_montserrat_10, 0);
-    lv_obj_align_to(time_label, time_week_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
-
+    cur_scr = base_info_scr2;
+    lv_scr_load(cur_scr);
 }
 
 void process_ui_messages(void) {
@@ -137,7 +214,6 @@ void process_ui_messages(void) {
         }
     }
 }
-
 
 // 通用更新函数模板
 void update_ui_safe(lv_obj_t* target, void *func, void* data, size_t data_size) {
@@ -154,3 +230,4 @@ void update_ui_safe(lv_obj_t* target, void *func, void* data, size_t data_size) 
  
     xQueueSend(ui_update_queue, &msg, portMAX_DELAY);
 }
+

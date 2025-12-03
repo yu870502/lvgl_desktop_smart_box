@@ -32,6 +32,8 @@ idf_component_register(
         uc1638
         humidity_sensor
         WLAN
+        ec11
+        esp_driver_pcnt
 )
 
 set_source_files_properties(app_main.c PROPERTIES COMPILE_FLAGS "-save-temps=obj")
