@@ -9,9 +9,12 @@
 /*********************
  *      INCLUDES
  *********************/
+#include <stdatomic.h>
+
 #include "lv_port_indev.h"
 #include "../../lvgl.h"
 #include "gpio_key.h"
+
 /*********************
  *      DEFINES
  *********************/
@@ -56,8 +59,11 @@ lv_indev_t * indev_keypad;
 lv_indev_t * indev_encoder;
 lv_indev_t * indev_button;
 
-static int32_t encoder_diff;
-static lv_indev_state_t encoder_state;
+// static int32_t encoder_diff;
+// static lv_indev_state_t encoder_state;
+
+atomic_int_fast32_t encoder_diff_atomic = 0;
+atomic_uint_fast8_t encoder_state_atomic = LV_INDEV_STATE_REL;
 
 /**********************
  *      MACROS
@@ -116,6 +122,8 @@ void lv_port_indev_init(void)
     lv_img_set_src(mouse_cursor, LV_SYMBOL_HOME);
     lv_indev_set_cursor(indev_mouse, mouse_cursor);
 #endif
+
+#if 0
     /*------------------
      * Keypad
      * -----------------*/
@@ -133,8 +141,9 @@ void lv_port_indev_init(void)
      *add objects to the group with `lv_group_add_obj(group, obj)`
      *and assign this input device to group to navigate in it:
      *`lv_indev_set_group(indev_keypad, group);`*/
+#endif
 
-#if 0
+#if 1
     /*------------------
      * Encoder
      * -----------------*/
@@ -341,9 +350,10 @@ static void encoder_init(void)
 /*Will be called by the library to read the encoder*/
 static void encoder_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
-
-    data->enc_diff = encoder_diff;
-    data->state = encoder_state;
+    data->enc_diff = atomic_exchange(&encoder_diff_atomic, 0);  // 读取并清零
+    data->state = atomic_load(&encoder_state_atomic);
+    // data->enc_diff = encoder_diff;
+    // data->state = encoder_state;
 }
 
 /*Call this function in an interrupt to process encoder events (turn, press)*/
@@ -351,8 +361,8 @@ static void encoder_handler(void)
 {
     /*Your code comes here*/
 
-    encoder_diff += 0;
-    encoder_state = LV_INDEV_STATE_REL;
+    // encoder_diff += 0;
+    // encoder_state = LV_INDEV_STATE_REL;
 }
 
 /*------------------

@@ -43,8 +43,15 @@
 
 #include "driver/pulse_cnt.h"
 #include "ec11.h"
+#include "lv_port_indev.h"
+#include "linkkit_mqtt.h"
+
+#include "app_main.h"
+
+#include "dbg_test.h"
 
 static const char *TAG = "main";
+TimeHMS_t sysRunTIme;
 
 /*
  This code displays some fancy graphics on the 320x240 LCD on an ESP-WROVER_KIT board.
@@ -61,15 +68,14 @@ static const char *TAG = "main";
 ////////////// Please update the following configuration according to your HardWare spec /////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-#define KEY_GPIO 19
+#define KEY_GPIO 34
 #define GPIO_INPUT_PIN_SEL (1ULL<<KEY_GPIO)
 
 #define ESP_INTR_FLAG_DEFAULT 0
 
 #define LV_ENABLE 1
 
-#define EXAMPLE_ONEWIRE_BUS_GPIO    27
+#define EXAMPLE_ONEWIRE_BUS_GPIO    16
 #define EXAMPLE_ONEWIRE_MAX_DS18B20 2
 
 static QueueHandle_t ec11_evt_queue = NULL;
@@ -80,20 +86,6 @@ onewire_bus_handle_t bus = NULL;
 ds18b20_device_handle_t ds18b20s[EXAMPLE_ONEWIRE_MAX_DS18B20];
 
 float curTemp;
-
-void add_scale_labels(void);
-// 初始化滚动文本
-void init_scroll_text(void);
-
-static lv_obj_t *temp_bar;
-static lv_obj_t *scroll_label;
-static const char *scroll_texts[] = {
-    "   This is my show time    ",
-    "欲买桂花同载酒,终不似少年游。", \
-    "系统运行中,传感器工作正常",
-};
-static int current_text_index = 0;
-static lv_anim_t scroll_anim;
 
 // 显存镜像[12页][240列]，每字节存储8垂直像素
 uint8_t display_data[12][240];
@@ -133,52 +125,34 @@ void area_flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) 
     // customPageWindowProgramming(start_page, end_page, start_col, end_col, &display_data[start_page][start_col]);
 }
 
-void init_scroll_text(void) {
-    // 创建滚动标签
-    scroll_label = lv_label_create(lv_scr_act());
-    lv_label_set_long_mode(scroll_label, LV_LABEL_LONG_SCROLL_CIRCULAR); // 循环滚动模式
-    lv_label_set_text(scroll_label, scroll_texts[0]);
-    lv_obj_set_style_text_font(scroll_label, &lv_font_montserrat_14, 0);
-    
-    // 放在温度显示区域下方
-    lv_obj_set_width(scroll_label, 90); // 设置宽度限制滚动范围
-}
-
-// 更新滚动文本（可选：定时切换不同文本）
-void update_scroll_text(void) {
-    if (scroll_label == NULL) return;
-    
-    // 切换到下一个文本
-    current_text_index = (current_text_index + 1) % 4;
-    lv_label_set_text(scroll_label, scroll_texts[current_text_index]);
-}
-
-void add_scale_labels(void) {
-    const char *scale_texts[] = {"0", "10", "20", "30", "40", "50"};
-    
-    for (int i = 0; i < 6; i++) {
-        lv_obj_t *scale_label = lv_label_create(lv_scr_act());
-        lv_label_set_text(scale_label, scale_texts[i]);
-        lv_obj_set_style_text_font(scale_label, &lv_font_montserrat_12, 0);
-        lv_obj_align_to(scale_label, temp_bar, LV_ALIGN_OUT_TOP_MID, 
-                       -90 + (i * 36), -5);  // 往上移一点给大字体留空间
-    }
-}
-
 void getDs18b20TempTask(void *)
 {
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(2000));
 
         // trigger curTemp conversion for all sensors on the bus
-        ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(ds18b20_trigger_temperature_conversion_for_all(bus));
         float temp;
+        char temp_str[160] = {0};
         for (int i = 0; i < ds18b20_device_num; i ++) {
-            ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temp));
+            if(ESP_OK != (ds18b20_get_temperature(ds18b20s[i], &temp))){
+                ESP_LOGE(TAG, "DS18B20[%d] get_temperature error", i);
+                continue;
+            }
             ESP_LOGI(TAG, "temperature read from DS18B20[%d]: %.2f°C", i, temp);
+
             if(temp != curTemp){
                 curTemp = temp;
                 update_ui_safe(temp_meter, update_temp, (void *)&curTemp, sizeof(curTemp));
+
+                sprintf(temp_str, "{\"CurrentTemperature\": %.2f}", curTemp);
+                demo_send_property_post(dm_handle, temp_str);
+
+                // sprintf(temp_str, "{\"properties\":{\"CurrentTemperature\": [ {\"value\":%.2f,\"time\":1612684518}],\"CurrentHumidity\": [ {\"value\":%d,\"time\":1612684518}]}}", curTemp, humiObj->curVal);
+                // sprintf(temp_str, "{\"CurrentTemperature\":{\"value\":%.2f,\"time\":1612684518},\"CurrentHumidity\":{\"value\":%d,\"time\":1612684518}}", curTemp, humiObj->curVal);
+                // demo_send_property_batch_post(dm_handle, temp_str);
+                // demo_send_property_batch_post(dm_handle,
+                //                       "{\"properties\":{\"CurrentTemperature\": [ {\"value\":22.0,\"time\":1612684518}],\"CurrentHumidity\": [{\"value\": 3,\"time\":1612684518}]}}");
             }
         }
     }
@@ -223,7 +197,7 @@ void init_ds18b20(void)
     ESP_ERROR_CHECK(onewire_del_device_iter(iter));
     ESP_LOGI(TAG, "Searching done, %d DS18B20 device(s) found", ds18b20_device_num);
 
-    xTaskCreate(getDs18b20TempTask, "getTemp", 2 * 1024, NULL, 5, NULL);
+    xTaskCreate(getDs18b20TempTask, "getTemp", 4 * 1024, NULL, 5, NULL);
 }
 
 static TaskHandle_t s_task_handle;
@@ -278,7 +252,7 @@ void continuous_read_task(void *)
                 // ESP_LOGI("TASK", "ret is %x, ret_num is %"PRIu32" bytes", ret, ret_num);
                 for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_RESULT_BYTES) {
                     adc_digi_output_data_t *p = (adc_digi_output_data_t*)&result[i];
-                    // printf("reslut size:%d\n", sizeof(adc_digi_output_data_t));
+                    // ESP_LOGI(TAG, "reslut size:%d\n", sizeof(adc_digi_output_data_t));
                     uint32_t chan_num = EXAMPLE_ADC_GET_CHANNEL(p);
                     uint32_t data = EXAMPLE_ADC_GET_DATA(p);
                     adc_cali_raw_to_voltage(cali_handle, data, &voltage);
@@ -287,13 +261,17 @@ void continuous_read_task(void *)
                     if (chan_num < SOC_ADC_CHANNEL_NUM(EXAMPLE_ADC_UNIT)) {
                         // ESP_LOGI(TAG, "Raw data:%#x, data:%d, voltage:%dmv, Channel: %"PRIu32, p->val, data, voltage, chan_num);
                         humi = (float)(voltage * 244) / 10000.0;
-                        ESP_LOGI(TAG, "humi:%f", humi);
+                        ESP_LOGI(TAG, "humi:%.2f", humi);
                         if(!humiObj){
                             ESP_LOGW(TAG, "humiObj is none");
                         }
                         else if(humi != humiObj->curVal){
                             humiObj->curVal = humi;
-                            update_ui_safe(humi_meter, update_humi, &humiObj->curVal, sizeof(humiObj->curVal));   
+                            update_ui_safe(humi_meter, update_humi, &humiObj->curVal, sizeof(humiObj->curVal));
+                            char temp_str[160] = {0};
+                            sprintf(temp_str, "{\"CurrentHumidity\":%d}", humiObj->curVal);
+                            demo_send_property_post(dm_handle, temp_str);
+
                         }
                     } else {
                         ESP_LOGW(TAG, "Invalid data [%s_%"PRIu32"_%"PRIx32"]", unit, chan_num, data);
@@ -308,7 +286,7 @@ void continuous_read_task(void *)
                 //We try to read `EXAMPLE_READ_LEN` until API returns timeout, which means there's no available data
                 break;
             }
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            vTaskDelay(pdMS_TO_TICKS(2000));
         }
     }
 
@@ -333,14 +311,14 @@ static void gpio_isr_handler(void* arg)
 {
     static uint32_t last_time = 0;
     uint32_t now = xTaskGetTickCountFromISR();
-    if (now - last_time > pdMS_TO_TICKS(20)) {  // 20ms 消抖
+    if (now - last_time > pdMS_TO_TICKS(50)) {  // 消抖
+        last_time = now;
         if(gpio_isr_times >=5){
             gpio_isr_times = 0;
         }
-        gpio_isr_times++;        
+        gpio_isr_times++;
         xQueueSendFromISR(gpio_evt_queue, &gpio_isr_times, NULL);
     }
-    last_time = now;    
 }
 
 uint32_t read_gpio_key_status()
@@ -365,18 +343,16 @@ void led_key_init()
     gpio_config_t io_conf = {};
 
     //interrupt of rising edge
-    io_conf.intr_type = GPIO_INTR_LOW_LEVEL;
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
-    io_conf.pull_up_en = 1;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
 
     //create a queue to handle gpio event from isr
     gpio_evt_queue = xQueueCreate(5, sizeof(uint32_t));
     // xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
 
-    //install gpio isr service
-    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);    //初始化允许注册中断处理函数。必须调用此函数后才能添加中断处理程序。
     gpio_isr_handler_add(KEY_GPIO, gpio_isr_handler, NULL);
 }
 
@@ -439,20 +415,23 @@ void meminfo_task(void *arg)
 #define ROTARY_NONE -1
 
 //watch point isr
-static bool ec11_rotary_evt_send(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx)
+static bool ec11_rotary_evt_handle(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx)
 {
-    BaseType_t high_task_wakeup;
+    // BaseType_t high_task_wakeup;
     // QueueHandle_t ec11_evt_queue = (QueueHandle_t)user_ctx;
-    int rotary = ROTARY_NONE;
+    // int rotary = ROTARY_NONE;
     if(edata->watch_point_value < 0){
-        rotary = ROTARY_RIGHT;
+        atomic_fetch_add(&encoder_diff_atomic, 1);  // 原子增加
+        // rotary = ROTARY_RIGHT;
     }
     else if(edata->watch_point_value > 0){
-        rotary = ROTARY_LEFT; 
+        atomic_fetch_sub(&encoder_diff_atomic, 1);  // 原子减少
+        // rotary = ROTARY_LEFT; 
     }
     // send event data to ec11_evt_queue, from this interrupt callback
-    xQueueSendFromISR(ec11_evt_queue, &rotary, &high_task_wakeup);
-    return (high_task_wakeup == pdTRUE);
+    // xQueueSendFromISR(ec11_evt_queue, &rotary, &high_task_wakeup);
+    // return (high_task_wakeup == pdTRUE);
+    return pdTRUE;
 }
 
 void ec11_rotray_evt_handle_task(void *arg)
@@ -468,22 +447,79 @@ void ec11_rotray_evt_handle_task(void *arg)
     }
 }
 
+esp_reset_reason_t get_rst_reason(void) {
+    ESP_LOGI(TAG, "System reset reason:\n");
+    esp_reset_reason_t reason = esp_reset_reason();
+    switch (reason) {
+        case ESP_RST_POWERON:
+            ESP_LOGI(TAG, "Power on reset\n");
+            break;
+        case ESP_RST_SW:
+            ESP_LOGI(TAG, "Software reset\n");
+            break;
+        case ESP_RST_PANIC:
+            ESP_LOGI(TAG, "Software reset due to exception/panic\n");
+            break;
+        case ESP_RST_INT_WDT:
+            ESP_LOGI(TAG, "Interrupt watchdog reset\n");
+            break;
+        case ESP_RST_TASK_WDT:
+            ESP_LOGI(TAG, "Task watchdog reset\n");
+            break;
+        case ESP_RST_WDT:
+            ESP_LOGI(TAG, "Other watchdog reset\n");
+            break;
+        case ESP_RST_DEEPSLEEP:
+            ESP_LOGI(TAG, "Reset after exiting deep sleep mode\n");
+            break;
+        case ESP_RST_BROWNOUT:
+            ESP_LOGI(TAG, "Brownout reset\n");
+            break;
+        case ESP_RST_EXT:
+            ESP_LOGI(TAG, "External reset\n");
+            break;
+        default:
+            ESP_LOGI(TAG, "Unknown reset reason\n");
+    }
+    return reason;
+}
+
+// 将系统总Tick数转换为时分秒
+void get_system_uptime_hms(TimeHMS_t *t) {
+    // 1. 直接获取系统启动以来的总Tick数
+    TickType_t total_ticks = xTaskGetTickCount();
+    
+    // 2. 转换为总秒数（ESP-IDF默认 configTICK_RATE_HZ = 100，即1 Tick = 10ms）
+    uint32_t total_seconds = total_ticks / configTICK_RATE_HZ;
+    
+    // 3. 计算时分秒
+    t->h = total_seconds / 3600;
+    t->m = (total_seconds % 3600) / 60;
+    t->s = total_seconds % 60;
+}
+
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Build time:%s\n", __TIME__);
+    get_rst_reason();    
+    ESP_LOGI(TAG, "Fw build time:%s\n", __TIME__);    
 
     smartconfig_run();
 
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);    //只能执行一次，初始化允许注册中断处理函数。必须调用此函数后才能添加中断处理程序。
     led_key_init();
 
     lcd_init();
+
+    // ec11_evt_queue = xQueueCreate(15, sizeof(int));
+    // xTaskCreate(ec11_rotray_evt_handle_task, "ec11 rotary", 2048, NULL, 6, NULL);
+    ec11_init(ec11_create(ec11_rotary_evt_handle, NULL));
 
 #if LV_ENABLE
     lv_init();            // LVGL 初始化
     lv_port_disp_init();  // 注册LVGL的显示任务
     lv_port_indev_init(); // 注册LVGL的触屏检测任务
 
-    LV_LOG_WARN("测试警告日志");      // 应该输出
+    // LV_LOG_WARN("测试警告日志");      // 应该输出
 
     my_gui_init();
 
@@ -492,12 +528,12 @@ void app_main(void)
     init_ds18b20();
     start_humidity_sensor(NULL);
 
-    xTaskCreate(meminfo_task, "meminfo", 2048, NULL, 6, NULL);
+    xTaskCreate(meminfo_task, "meminfo", 4096, NULL, 6, NULL);
 
-    ec11_evt_queue = xQueueCreate(15, sizeof(int));
-    xTaskCreate(ec11_rotray_evt_handle_task, "ec11 rotary", 2048, NULL, 6, NULL);
-    ec11_start(ec11_create(ec11_rotary_evt_send, ec11_evt_queue));
+    get_system_uptime_hms(&sysRunTIme);
+    update_sysRunTime(sysRunTime_label, &sysRunTIme);
 
+    // linkkit_main();
 //-------------------------------------------------------------------------------------------
     TimerHandle_t lvgl_timer = xTimerCreate(
         "lv_tick",
@@ -512,11 +548,15 @@ void app_main(void)
     while(1) {
         process_ui_messages();
         lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(5));   //5ms
         timeCnt++;
 
         if(0 == timeCnt % 200){ //1s
             update_time(NULL, NULL);
+        }
+        if(0 == timeCnt % 10000){ //50s
+            get_system_uptime_hms(&sysRunTIme);
+            update_sysRunTime(sysRunTime_label, &sysRunTIme);
         }
 
         if(0 == timeCnt % 400){ //5s

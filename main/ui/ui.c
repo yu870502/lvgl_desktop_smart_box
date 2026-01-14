@@ -10,6 +10,10 @@
 
 #include "ui.h"
 
+#include "dbg_test.h"
+
+static const char *TAG = "ui";
+
 lv_obj_t *base_info_scr1 = NULL;
 lv_obj_t *base_info_scr2 = NULL;
 lv_obj_t *dev_info_scr = NULL;
@@ -26,6 +30,8 @@ lv_obj_t* wifi_rssi_label;
 lv_obj_t* time_YMD_label;
 lv_obj_t* time_label;
 lv_obj_t* time_week_label;
+
+lv_obj_t* sysRunTime_label;
 
 lv_meter_indicator_t* temp_needle = NULL;
 lv_meter_indicator_t* humi_needle = NULL;
@@ -151,7 +157,7 @@ void create_scr2(void) {
     lv_obj_set_size(vline, 2, 80);  // 竖线高度80像素，几乎占满屏幕高度
     lv_obj_set_pos(vline, line_x, 2);  // 从y=8开始，留点边距
     lv_obj_set_style_bg_color(vline, lv_color_white(), 0);
-    
+
     // 4. 右侧区域 - 温度显示 (竖线右侧)
     temp_label = lv_label_create(base_info_scr2);
     lv_label_set_text(temp_label, "25.0°C");
@@ -187,6 +193,11 @@ int create_dev_info_scr(){
     lv_obj_set_style_text_font(wifi_rssi_label, &lv_font_montserrat_14, 0);
     lv_obj_align_to(wifi_rssi_label, wifi_name_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
 
+    sysRunTime_label = lv_label_create(dev_info_scr);
+    lv_label_set_text(sysRunTime_label, "Run Time: 0");
+    lv_obj_set_style_text_font(sysRunTime_label, &lv_font_montserrat_16, 0);
+    lv_obj_align_to(sysRunTime_label, wifi_rssi_label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 0);
+
     return 0;
 }
 
@@ -200,6 +211,10 @@ void my_gui_init(void) {
 
     cur_scr = base_info_scr2;
     lv_scr_load(cur_scr);
+
+    lv_group_t * _widget_grps = lv_group_create();
+    // lv_group_add_obj(group, obj);
+    // lv_indev_set_group(indev_encoder, group);
 }
 
 void process_ui_messages(void) {
@@ -227,7 +242,10 @@ void update_ui_safe(lv_obj_t* target, void *func, void* data, size_t data_size) 
         msg.data = pvPortMalloc(data_size);
         if(msg.data) memcpy(msg.data, data, data_size);
     }
- 
+    // UBaseType_t n = uxQueueMessagesWaiting(ui_update_queue);
+    // ESP_LOGI("UI", "Queue wait num: %d", n);
+    // n =  uxQueueSpacesAvailable( ui_update_queue );
+    // ESP_LOGI("UI", "Queue free num: %d", n);
     xQueueSend(ui_update_queue, &msg, portMAX_DELAY);
 }
 

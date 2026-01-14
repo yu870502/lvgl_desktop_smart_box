@@ -4,6 +4,7 @@
 
 #define WIFI_NAME_LABLE_FORMAT "WIFI:%s\nCC:%s"
 #define WIFI_RSSI_LABLE_FORMAT "RSSI:%ddb"
+#define SYSRUNTIME_LABLE_FORMAT "run time:%d(h):%d(m)"
 
 typedef struct {
     lv_obj_t* target;    // 目标控件
@@ -40,6 +41,8 @@ extern lv_obj_t* wifi_rssi_label;
 extern lv_obj_t* time_YMD_label;
 extern lv_obj_t* time_label;
 extern lv_obj_t* time_week_label;
+
+extern lv_obj_t* sysRunTime_label;
 
 void process_ui_messages(void);
 

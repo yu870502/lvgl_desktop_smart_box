@@ -37,6 +37,7 @@ static const char *TAG = "sntp";
 // RTC_DATA_ATTR static int boot_count = 0;
 
 time_t curTime;
+time_t runTime = 0;
 
 static void obtain_time(void);
 

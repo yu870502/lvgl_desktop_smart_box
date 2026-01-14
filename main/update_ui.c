@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "sntp_sync.h"
 #include "network_moni.h"
+#include "app_main.h"
 
 void update_temp(lv_obj_t *target, float *v){
     float t = *v;
@@ -14,16 +15,16 @@ void update_temp(lv_obj_t *target, float *v){
     sprintf(str, "%.2f°C", t);
     lv_label_set_text(temp_label, str);    
 }
-void update_humi(lv_obj_t *target, float *v){
-    float h = *v;
-    lv_meter_set_indicator_value(target, humi_needle, (int)h);
+void update_humi(lv_obj_t *target, int *v){
+    int h = *v;
+    lv_meter_set_indicator_value(target, humi_needle, h);
 
     char str[16] = {0};
-    sprintf(str, "%.2f%%", h);
+    sprintf(str, "%d%%", h);
     lv_label_set_text(humi_val_label, str);
 
     memset(str, 0, sizeof(str));
-    sprintf(str, "%.2f%%", h);
+    sprintf(str, "%d%%", h);
     lv_label_set_text(humi_label, str);
 }
 void update_time(lv_obj_t *target, void *arg){
@@ -62,7 +63,7 @@ void update_time(lv_obj_t *target, void *arg){
         || now_tm.tm_mday != old_tm.tm_mday || now_tm.tm_wday != old_tm.tm_wday){
         strftime(time_str, sizeof(time_str), "%Y-%m-%d %a", &now_tm);
         lv_label_set_text(date_label, time_str);
-    }     
+    }
 }
 
 // 更新函数
@@ -76,5 +77,12 @@ void update_wifi_rssi(lv_obj_t *target, int *rssi) {
 void update_wifi_name(lv_obj_t *target, char *name) {
     char str[64] = {0};
     sprintf(str, WIFI_NAME_LABLE_FORMAT, name, curCC);
+    lv_label_set_text(target, str);
+}
+
+void update_sysRunTime(lv_obj_t *target, TimeHMS_t *t)
+{
+    char str[64] = {0};
+    sprintf(str, SYSRUNTIME_LABLE_FORMAT, t->h, t->m);
     lv_label_set_text(target, str);
 }

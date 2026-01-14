@@ -6,6 +6,8 @@
 #include "ui.h"
 #include "update_ui.h"
 
+#include "dbg_test.h"
+
 static const char *TAG = "network_info";
 static int curRSSI = 0;
 static char curName[33] = {0};
