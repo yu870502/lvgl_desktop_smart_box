@@ -44,7 +44,7 @@
 #include "driver/pulse_cnt.h"
 #include "ec11.h"
 #include "lv_port_indev.h"
-#include "linkkit_mqtt.h"
+// #include "linkkit_mqtt.h"
 
 #include "app_main.h"
 
@@ -146,7 +146,7 @@ void getDs18b20TempTask(void *)
                 update_ui_safe(temp_meter, update_temp, (void *)&curTemp, sizeof(curTemp));
 
                 sprintf(temp_str, "{\"CurrentTemperature\": %.2f}", curTemp);
-                demo_send_property_post(dm_handle, temp_str);
+                // demo_send_property_post(dm_handle, temp_str);
 
                 // sprintf(temp_str, "{\"properties\":{\"CurrentTemperature\": [ {\"value\":%.2f,\"time\":1612684518}],\"CurrentHumidity\": [ {\"value\":%d,\"time\":1612684518}]}}", curTemp, humiObj->curVal);
                 // sprintf(temp_str, "{\"CurrentTemperature\":{\"value\":%.2f,\"time\":1612684518},\"CurrentHumidity\":{\"value\":%d,\"time\":1612684518}}", curTemp, humiObj->curVal);
@@ -270,7 +270,7 @@ void continuous_read_task(void *)
                             update_ui_safe(humi_meter, update_humi, &humiObj->curVal, sizeof(humiObj->curVal));
                             char temp_str[160] = {0};
                             sprintf(temp_str, "{\"CurrentHumidity\":%d}", humiObj->curVal);
-                            demo_send_property_post(dm_handle, temp_str);
+                            // demo_send_property_post(dm_handle, temp_str);
 
                         }
                     } else {

@@ -3,26 +3,13 @@
 # 在ESP-IDF组件系统中:组件CMakeLists.txt（如main/CMakeLists.txt）：不能使用 ADD_SUBDIRECTORY
 # add_subdirectory(paho.mqtt.embedded-c)  
 
-# 合并你的源文件和 LVGL 源文件
-# set(srcs
-#     "app_main.c"
-#     update_ui.c
-#     lv_port/lv_port_disp.c
-#     lv_port/lv_port_fs.c
-#     lv_port/lv_port_indev.c
-#     ui/ui.c
-#     network_moni/network_moni.c
-#     sntp_sync/sntp_sync.c
-#     linkkit_mqtt
-# )
-
 file(GLOB srcs
     "*.c"
     "lv_port/*.c"
     "ui/*.c"
     "network_moni/*.c"
     "sntp_sync/*.c"
-    "linkkit_mqtt/*.c"
+    # "linkkit_mqtt/*.c"
     )
 
 file(GLOB inc
@@ -31,15 +18,15 @@ file(GLOB inc
     ${CMAKE_CURRENT_SOURCE_DIR}/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/network_moni
     ${CMAKE_CURRENT_SOURCE_DIR}/sntp_sync
-    ${CMAKE_CURRENT_SOURCE_DIR}/linkkit_mqtt
+    # ${CMAKE_CURRENT_SOURCE_DIR}/linkkit_mqtt
     ${CMAKE_CURRENT_SOURCE_DIR}/dbg_test
     )
 
 # 方法1：使用foreach
-message("inc = ---------------------------------------")
-foreach(item ${inc})
-    message("  ${item}")
-endforeach()
+# message("inc = ---------------------------------------")
+# foreach(item ${inc})
+#     message("  ${item}")
+# endforeach()
 
 # 注册组件（包含所有源文件和头文件路径）
 idf_component_register(
@@ -60,7 +47,7 @@ idf_component_register(
         ec11
         esp_driver_pcnt
         esp_system
-        LinkSDK
+        # LinkSDK
 )
 
 # set_source_files_properties(app_main.c PROPERTIES COMPILE_FLAGS "-save-temps=obj")
